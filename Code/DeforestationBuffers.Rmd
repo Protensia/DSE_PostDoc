@@ -1,0 +1,137 @@
+---
+title: "Buffer_Deforestation"
+output: Buffer_Deforestation
+---
+
+```{r}
+rm(list = ls())
+
+library(raster)
+library(exactextractr)
+library(sf)
+library(dplyr)
+options(dplyr.summarise.inform = FALSE)
+library(tidyr)
+library(ggplot2)
+library(haven)
+```
+
+### Loading up shapefiles
+
+```{r}
+deforestation <- raster("C:/Users/hadunka2/Box/01. Zambia Deforestation/Deforestation/Shapefiles/deforestation_africa.tif")
+
+households <- read_sf("C:/Users/hadunka2/Box/01. Zambia Deforestation/buffer_3km/Export_Output.shp")
+
+zambia = read_sf("C:/Users/hadunka2/Box/01. Zambia Deforestation/New shapefiles/zmb_admbnda_adm2_2020.shp")
+```
+
+### Creating Loop
+
+```{r}
+final <- list()
+buffers <- c(1,5,10,15,20)
+
+for (i in seq(1,5,1))
+{
+buffer <- st_buffer(households, buffers[i]*1000)
+
+# Dividing by 10^6 is since the original units are m^2 so to get to km^2 we divide by 10^6
+# Code from: https://cran.r-project.org/web/packages/exactextractr/vignettes/vig2_categorical.html
+
+def_areas <- exact_extract(deforestation, buffer, function(df) {
+    df %>%
+        group_by(HHID, value) %>%
+        dplyr::summarize(area_km2 =  sum(coverage_area)/1e6)
+}, summarize_df = TRUE, coverage_area = TRUE, include_cols = 'HHID', progress = FALSE)
+
+
+def_areas <- def_areas %>% ungroup %>% complete(HHID,value)
+
+#def_areas <- subset(def_areas, value != 0)
+
+def_areas$area_km2 <- ifelse(is.na(def_areas$area_km2) == T, 0, def_areas$area_km2)
+
+colnames(def_areas)[3] <- paste("area_km2_buffer_", buffers[i], sep = "")
+
+final[[i]] <- def_areas
+}
+
+test <- Reduce(merge,final)
+
+# Getting the forest area as a separate column
+
+test <- test %>% group_by(HHID) %>% mutate(forest_1 = max(area_km2_buffer_1))
+  
+test <- test %>% group_by(HHID) %>% mutate(forest_5 = max(area_km2_buffer_5))
+
+test <- test %>% group_by(HHID) %>% mutate(forest_10 = max(area_km2_buffer_10))
+
+test<- test %>% group_by(HHID) %>% mutate(forest_15 = max(area_km2_buffer_15))
+
+test <- test %>% group_by(HHID) %>% mutate(forest_20 = max(area_km2_buffer_20))
+
+# Subsetting:
+
+test <- subset(test, value != 0)
+
+# Calculating remaining forest:
+test <- test %>% group_by(HHID) %>% dplyr::arrange(value, .by_group = TRUE) %>% 
+  mutate(forests_1 = forest_1 - cumsum(area_km2_buffer_1))
+
+test <- test %>% group_by(HHID) %>% dplyr::arrange(value, .by_group = TRUE) %>% 
+  mutate(forests_5 = forest_5 - cumsum(area_km2_buffer_5))
+
+test <- test %>% group_by(HHID) %>% dplyr::arrange(value, .by_group = TRUE) %>%
+  mutate(forests_10 = forest_10 - cumsum(area_km2_buffer_10))
+
+test <- test %>% group_by(HHID) %>% dplyr::arrange(value, .by_group = TRUE) %>% 
+  mutate(forests_15 = forest_15 - cumsum(area_km2_buffer_15))
+
+test <- test %>% group_by(HHID) %>% dplyr::arrange(value, .by_group = TRUE) %>% 
+  mutate(forests_20 = forest_20 - cumsum(area_km2_buffer_20))
+
+test <- test[-c(8:12)]
+
+# Saving
+
+write.csv(test, "C:/Users/hadunka2/Box/01. Zambia Deforestation/buffer_deforestation.csv")
+
+write_dta(test, "C:/Users/hadunka2/Box/01. Zambia Deforestation/buffer_deforestation.dta")
+```
+
+# For the district level:
+
+```{r}
+zambia = zambia %>% sf::st_set_crs(st_crs(buffer))
+
+def_areas <- exact_extract(deforestation, zambia, function(df) {
+    df %>%
+        group_by(ADM2_EN, value) %>%
+        dplyr::summarize(area_km2 =  sum(coverage_area)/1e6)
+}, summarize_df = TRUE, coverage_area = TRUE, include_cols = 'ADM2_EN', progress = FALSE)
+
+
+def_areas <- def_areas %>% ungroup %>% complete(ADM2_EN,value)
+
+#def_areas <- subset(def_areas, value != 0)
+
+def_areas$area_km2 <- ifelse(is.na(def_areas$area_km2) == T, 0, def_areas$area_km2)
+
+def_areas <- def_areas %>% group_by(ADM2_EN) %>% mutate(forest_1 = max(area_km2))
+
+def_areas <- def_areas %>% group_by(ADM2_EN) %>% dplyr::arrange(value, .by_group = TRUE) %>% 
+  mutate(forests_1 = forest_1 - cumsum(area_km2))
+
+def_areas$treated <- NA
+
+def_areas$treated <- ifelse(def_areas$ADM2_EN %in% c('Lundazi','Petauke', 'Namwala', 'Mufumbwe'), 1, def_areas$treated)
+
+def_areas$treated <- ifelse(def_areas$ADM2_EN %in% c('Mbala','Mungwi', 'Solwezi', 'Choma'), 0, def_areas$treated)
+
+write.csv(def_areas, "C:/Users/hadunka2/Box/01. Zambia Deforestation/district_deforestation.csv")
+
+write_dta(def_areas, "C:/Users/hadunka2/Box/01. Zambia Deforestation/district_deforestation.dta")
+
+ggplot(def_areas, aes(x = value, y = ))
+```
